@@ -1,40 +1,39 @@
-import "server-only";
-import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-export function createClient() {
-  const cookieStore = cookies();
+/**
+ * Server Components / Route Handlers で使う Supabase client
+ * - Next.js の cookies() が Promise になる環境に対応（await）
+ * - env 未設定のときは原因が分かるように明示的にエラーにする
+ */
+export async function createClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          // Next.js 16: cookies() は .getAll() ではなく store.getAll? が無いので、全取得を自前で返す
-          // cookieStore.getAll が無い環境では、最低限 auth に必要な cookie だけ読む方式でOK
-          const all = cookieStore.getAll?.();
-          if (all) return all;
+  if (!url) {
+    throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_URL");
+  }
+  if (!anonKey) {
+    throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
 
-          // フォールバック（getAll が無い場合）
-          const names = ["sb-access-token", "sb-refresh-token"];
-          return names
-            .map((name) => {
-              const v = cookieStore.get(name)?.value;
-              return v ? { name, value: v } : null;
-            })
-            .filter(Boolean) as { name: string; value: string }[];
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // Server Component から呼ばれた時などは set できないことがあるので無視
-          }
-        },
+  // Next.js のバージョンによって cookies() が async のため await する
+  const cookieStore = await cookies();
+
+  return createServerClient(url, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
       },
-    }
-  );
+      setAll(cookiesToSet) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // Server Component など set が禁止されるコンテキストで呼ばれても落とさない
+        }
+      },
+    },
+  });
 }
